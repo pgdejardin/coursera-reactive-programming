@@ -52,7 +52,19 @@ trait SwingApi {
       * @return an observable with a stream of text field updates
       */
     def textValues: Observable[String] = { field: String =>
-      Observable.create()
+      Observable[String]((observer: Observer[String]) => {
+        field subscribe {
+          case ValueChanged(tf) => observer.onNext(tf.text)
+          case _ => ()
+        }
+
+        Subscription {
+          field unsubscribe {
+            case ValueChanged(tf) => observer.onCompleted
+            case _ => ()
+          }
+        }
+      })
     }
 
   }
