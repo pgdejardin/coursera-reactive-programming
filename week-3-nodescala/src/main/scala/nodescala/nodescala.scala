@@ -5,6 +5,7 @@ import java.util.concurrent.{LinkedBlockingQueue, ThreadPoolExecutor, TimeUnit}
 
 import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
 
+import scala.async.Async.{async, await}
 import scala.collection.JavaConversions._
 import scala.collection._
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -30,7 +31,8 @@ trait NodeScala {
     * @param body         the response to write back
     */
   private def respond(exchange: Exchange, token: CancellationToken, response: Response): Unit = {
-    response.foreach(s => if (token.nonCancelled) exchange.write(s))
+    while (response.hasNext && token.nonCancelled)
+      exchange.write(response next())
     exchange.close()
   }
 
@@ -47,22 +49,17 @@ trait NodeScala {
   def start(relativePath: String)(handler: Request => Response): Subscription = {
     val listener = createListener(relativePath)
     val subscription = listener.start()
-    val request = Future.run() { token =>
-      Future {
+    Future.run() { token =>
+      async {
         while (token.nonCancelled) {
-          val nextRequest: Future[(Request, Exchange)] = listener.nextRequest()
-          nextRequest onComplete {
-            case x => {
-              val r = x.get._1
-              val exchange = x.get._2
-              val response = handler(r)
-              respond(exchange, token, response)
-            }
+          val (req, exchange) = await {
+            listener.nextRequest()
           }
+          respond(exchange, token, handler(req))
         }
+        subscription.unsubscribe()
       }
     }
-    Subscription(subscription, request)
   }
 
 }
@@ -135,12 +132,11 @@ object NodeScala {
     def nextRequest(): Future[(Request, Exchange)] = {
       val p = Promise[(Request, Exchange)]()
 
-      createContext(xchg => {
-        val req = xchg.request
+      createContext(exchange => {
+        val req = exchange.request
         removeContext()
-        p.success((req, xchg))
+        p.success((req, exchange))
       })
-
       p.future
     }
   }
