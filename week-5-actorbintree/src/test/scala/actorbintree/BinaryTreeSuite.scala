@@ -4,7 +4,7 @@
 package actorbintree
 
 import akka.actor.{ Props, ActorRef, ActorSystem }
-import org.scalatest.{ BeforeAndAfterAll, FlatSpec }
+import org.scalatest.{ BeforeAndAfterAll }
 import akka.testkit.{ TestProbe, ImplicitSender, TestKit }
 import org.scalatest.Matchers
 import scala.util.Random
@@ -16,7 +16,7 @@ class BinaryTreeSuite(_system: ActorSystem) extends TestKit(_system) with FunSui
 
   def this() = this(ActorSystem("BinaryTreeSuite"))
 
-  override def afterAll: Unit = system.shutdown()
+  override def afterAll(): Unit = system.shutdown()
 
   import actorbintree.BinaryTreeSet._
 
