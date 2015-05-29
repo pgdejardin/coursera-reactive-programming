@@ -1,24 +1,21 @@
 package kvstore
 
-import akka.testkit.TestKit
-import akka.testkit.ImplicitSender
-import org.scalatest.BeforeAndAfterAll
-import org.scalatest.Matchers
-import org.scalatest.FunSuiteLike
 import akka.actor.ActorSystem
-import akka.testkit.TestProbe
-import scala.concurrent.duration._
-import Arbiter._
-import Persistence._
+import akka.testkit.{ImplicitSender, TestKit, TestProbe}
+import kvstore.Arbiter._
+import kvstore.Persistence._
 import org.scalactic.ConversionCheckedTripleEquals
+import org.scalatest.{BeforeAndAfterAll, FunSuiteLike, Matchers}
+
+import scala.concurrent.duration._
 
 class Step4_SecondaryPersistenceSpec extends TestKit(ActorSystem("Step4SecondaryPersistenceSpec"))
-    with FunSuiteLike
-        with BeforeAndAfterAll
-    with Matchers
-    with ConversionCheckedTripleEquals
-    with ImplicitSender
-    with Tools {
+with FunSuiteLike
+with BeforeAndAfterAll
+with Matchers
+with ConversionCheckedTripleEquals
+with ImplicitSender
+with Tools {
 
   override def afterAll(): Unit = {
     system.shutdown()

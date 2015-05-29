@@ -1,24 +1,20 @@
 package kvstore
 
-import akka.testkit.{ TestProbe, TestKit, ImplicitSender }
-import org.scalatest.BeforeAndAfterAll
-import org.scalatest.Matchers
-import org.scalatest.FunSuiteLike
 import akka.actor.ActorSystem
-import scala.concurrent.duration._
-import kvstore.Arbiter.{ JoinedSecondary, Join }
-import kvstore.Persistence.{ Persisted, Persist }
-import scala.util.Random
-import scala.util.control.NonFatal
+import akka.testkit.{ImplicitSender, TestKit, TestProbe}
+import kvstore.Arbiter.{Join, JoinedSecondary}
 import org.scalactic.ConversionCheckedTripleEquals
+import org.scalatest.{BeforeAndAfterAll, FunSuiteLike, Matchers}
+
+import scala.concurrent.duration._
 
 class Step2_SecondarySpec extends TestKit(ActorSystem("Step2SecondarySpec"))
-    with FunSuiteLike
-        with BeforeAndAfterAll
-    with Matchers
-    with ConversionCheckedTripleEquals
-    with ImplicitSender
-    with Tools {
+with FunSuiteLike
+with BeforeAndAfterAll
+with Matchers
+with ConversionCheckedTripleEquals
+with ImplicitSender
+with Tools {
 
   override def afterAll(): Unit = {
     system.shutdown()
@@ -26,8 +22,8 @@ class Step2_SecondarySpec extends TestKit(ActorSystem("Step2SecondarySpec"))
 
   test("case1: Secondary (in isolation) should properly register itself to the provided Arbiter") {
     val arbiter = TestProbe()
-        val secondary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "case1-secondary")
-    
+    val secondary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "case1-secondary")
+
     arbiter.expectMsg(Join)
   }
 
@@ -36,8 +32,8 @@ class Step2_SecondarySpec extends TestKit(ActorSystem("Step2SecondarySpec"))
 
     val arbiter = TestProbe()
     val replicator = TestProbe()
-        val secondary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "case2-secondary")
-        val client = session(secondary)
+    val secondary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "case2-secondary")
+    val client = session(secondary)
 
     arbiter.expectMsg(Join)
     arbiter.send(secondary, JoinedSecondary)
@@ -62,8 +58,8 @@ class Step2_SecondarySpec extends TestKit(ActorSystem("Step2SecondarySpec"))
 
     val arbiter = TestProbe()
     val replicator = TestProbe()
-        val secondary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "case3-secondary")
-        val client = session(secondary)
+    val secondary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "case3-secondary")
+    val client = session(secondary)
 
     arbiter.expectMsg(Join)
     arbiter.send(secondary, JoinedSecondary)
@@ -92,8 +88,8 @@ class Step2_SecondarySpec extends TestKit(ActorSystem("Step2SecondarySpec"))
 
     val arbiter = TestProbe()
     val replicator = TestProbe()
-        val secondary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "case4-secondary")
-        val client = session(secondary)
+    val secondary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "case4-secondary")
+    val client = session(secondary)
 
     arbiter.expectMsg(Join)
     arbiter.send(secondary, JoinedSecondary)
@@ -109,5 +105,5 @@ class Step2_SecondarySpec extends TestKit(ActorSystem("Step2SecondarySpec"))
     client.get("k1") should ===(Some("v2"))
   }
 
-  
+
 }

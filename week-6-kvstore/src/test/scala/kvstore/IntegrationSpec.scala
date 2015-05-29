@@ -3,12 +3,10 @@
  */
 package kvstore
 
-import akka.actor.{ Actor, Props, ActorRef, ActorSystem }
-import akka.testkit.{ TestProbe, ImplicitSender, TestKit }
-import org.scalatest.{ BeforeAndAfterAll, FlatSpec, Matchers }
-import scala.concurrent.duration._
-import org.scalatest.FunSuiteLike
+import akka.actor.ActorSystem
+import akka.testkit.{ImplicitSender, TestKit}
 import org.scalactic.ConversionCheckedTripleEquals
+import org.scalatest.{BeforeAndAfterAll, FunSuiteLike, Matchers}
 
 class IntegrationSpec(_system: ActorSystem) extends TestKit(_system)
     with FunSuiteLike
@@ -18,13 +16,9 @@ class IntegrationSpec(_system: ActorSystem) extends TestKit(_system)
     with ImplicitSender
     with Tools {
 
-  import Replica._
-  import Replicator._
-  import Arbiter._
-
   def this() = this(ActorSystem("ReplicatorSpec"))
 
-  override def afterAll: Unit = system.shutdown()
+  override def afterAll(): Unit = system.shutdown()
 
   /*
    * Recommendation: write a test case that verifies proper function of the whole system,

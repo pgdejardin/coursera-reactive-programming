@@ -1,20 +1,19 @@
 package kvstore
 
-import akka.actor.ActorSystem
+import akka.actor.{Actor, ActorRef, ActorSystem, Props}
+import akka.testkit.{ImplicitSender, TestKit, TestProbe}
+import org.scalatest.{FunSuiteLike, Matchers}
+
 import scala.concurrent.duration.FiniteDuration
-import akka.testkit.TestProbe
-import akka.actor.{ ActorRef, Actor }
-import org.scalatest.Matchers
-import org.scalatest.FunSuiteLike
-import akka.actor.Props
-import akka.testkit.TestKit
-import akka.testkit.ImplicitSender
-import scala.concurrent.duration._
 
 object Tools {
+
   class TestRefWrappingActor(val probe: TestProbe) extends Actor {
-    def receive = { case msg => probe.ref forward msg }
+    def receive = {
+      case msg => probe.ref forward msg
+    }
   }
+
 }
 
 /**
@@ -22,28 +21,27 @@ object Tools {
  * to a given replica. It will keep track of requested updates and allow
  * simple verification. See e.g. Step 1 for how it can be used.
  */
-trait Tools { this: TestKit with FunSuiteLike with Matchers with ImplicitSender =>
+trait Tools {
+  this: TestKit with FunSuiteLike with Matchers with ImplicitSender =>
 
-  import Arbiter._
   import Tools._
 
   def probeProps(probe: TestProbe): Props = Props(classOf[TestRefWrappingActor], probe)
 
+  def session(replica: ActorRef)(implicit system: ActorSystem) = new Session(TestProbe(), replica)
+
   class Session(val probe: TestProbe, val replica: ActorRef) {
+
     import Replica._
 
     @volatile private var seq = 0L
-    private def nextSeq: Long = {
-      val next = seq
-      seq += 1
-      next
-    }
-
     @volatile private var referenceMap = Map.empty[String, String]
 
-    def waitAck(s: Long): Unit = probe.expectMsg(OperationAck(s))
-
     def waitFailed(s: Long): Unit = probe.expectMsg(OperationFailed(s))
+
+    def setAcked(key: String, value: String): Unit = waitAck(set(key, value))
+
+    def waitAck(s: Long): Unit = probe.expectMsg(OperationAck(s))
 
     def set(key: String, value: String): Long = {
       referenceMap += key -> value
@@ -52,7 +50,13 @@ trait Tools { this: TestKit with FunSuiteLike with Matchers with ImplicitSender 
       s
     }
 
-    def setAcked(key: String, value: String): Unit = waitAck(set(key, value))
+    private def nextSeq: Long = {
+      val next = seq
+      seq += 1
+      next
+    }
+
+    def removeAcked(key: String): Unit = waitAck(remove(key))
 
     def remove(key: String): Long = {
       referenceMap -= key
@@ -60,8 +64,6 @@ trait Tools { this: TestKit with FunSuiteLike with Matchers with ImplicitSender 
       probe.send(replica, Remove(key, s))
       s
     }
-
-    def removeAcked(key: String): Unit = waitAck(remove(key))
 
     def getAndVerify(key: String): Unit = {
       val s = nextSeq
@@ -77,8 +79,6 @@ trait Tools { this: TestKit with FunSuiteLike with Matchers with ImplicitSender 
 
     def nothingHappens(duration: FiniteDuration): Unit = probe.expectNoMsg(duration)
   }
-
-  def session(replica: ActorRef)(implicit system: ActorSystem) = new Session(TestProbe(), replica)
 
 
 }
