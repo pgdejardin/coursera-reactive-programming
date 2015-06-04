@@ -28,6 +28,7 @@ object Replica {
   case class OperationFailed(id: Long) extends OperationReply
 
   case class GetResult(key: String, valueOption: Option[String], id: Long) extends OperationReply
+
 }
 
 class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
@@ -35,6 +36,22 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   /*
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
    */
+
+  var kv = Map.empty[String, String]
+  // a map from secondary replicas to replicators
+  var secondaries = Map.empty[ActorRef, ActorRef]
+  // the current set of replicators
+  var replicators = Set.empty[ActorRef]
+
+  var persistence: ActorRef = context.watch(context.actorOf(persistenceProps))
+  var sequencer = 0L
+
+  arbiter ! Join
+
+  def receive = {
+    case JoinedPrimary => context.become(leader)
+    case JoinedSecondary => context.become(replica)
+  }
 
   /* TODO Behavior for  the leader role. */
   val leader: Receive = {
@@ -50,20 +67,6 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   /* TODO Behavior for the replica role. */
   val replica: Receive = {
     case _ =>
-  }
-  var kv = Map.empty[String, String]
-  // a map from secondary replicas to replicators
-  var secondaries = Map.empty[ActorRef, ActorRef]
-  // the current set of replicators
-  var replicators = Set.empty[ActorRef]
-
-  arbiter ! Join
-  var persistence: ActorRef = context.watch(context.actorOf(persistenceProps))
-  var sequencer = 0L
-
-  def receive = {
-    case JoinedPrimary => context.become(leader)
-    case JoinedSecondary => context.become(replica)
   }
 
   def replicasDifference(rep: Set[ActorRef]): Set[ActorRef] = {
