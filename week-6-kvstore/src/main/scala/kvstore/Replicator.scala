@@ -2,7 +2,12 @@ package kvstore
 
 import akka.actor.{Actor, ActorRef, Props}
 
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration._
+
 object Replicator {
+
+  def props(replica: ActorRef): Props = Props(new Replicator(replica))
 
   case class Replicate(key: String, valueOption: Option[String], id: Long)
 
@@ -12,12 +17,14 @@ object Replicator {
 
   case class SnapshotAck(key: String, seq: Long)
 
-  def props(replica: ActorRef): Props = Props(new Replicator(replica))
+  case object RetrySnapShot
 }
 
 class Replicator(val replica: ActorRef) extends Actor {
 
   import Replicator._
+
+  import scala.language.postfixOps
 
   /*
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
@@ -30,16 +37,30 @@ class Replicator(val replica: ActorRef) extends Actor {
 
   var _seqCounter = 0L
 
+  context.system.scheduler.schedule(100 millis, 100 millis, self, RetrySnapShot)
+
+  /* TODO Behavior for the Replicator. */
+  def receive: Receive = {
+    case rep: Replicate =>
+      acks += _seqCounter ->(sender(), rep)
+      replica ! Snapshot(rep.key, rep.valueOption, _seqCounter)
+      nextSeq
+    case SnapshotAck(key, seq) if acks.contains(seq) =>
+      acks(seq) match {
+        case (actor, Replicate(vKey, _, id)) =>
+          actor ! Replicated(vKey, id)
+      }
+      acks -= seq
+    case RetrySnapShot if acks.nonEmpty =>
+      acks.minBy(_._1) match {
+        case (seq, (_, replicate)) =>
+          replica ! Snapshot(replicate.key, replicate.valueOption, seq)
+      }
+  }
+
   def nextSeq = {
     val ret = _seqCounter
     _seqCounter += 1
     ret
   }
-
-
-  /* TODO Behavior for the Replicator. */
-  def receive: Receive = {
-    case _ =>
-  }
-
 }

@@ -1,9 +1,9 @@
 package kvstore
 
-import akka.actor._
+import akka.actor.{Actor, ActorRef, PoisonPill, Props, Stash, SupervisorStrategy, Terminated}
 import kvstore.Arbiter._
-import kvstore.Replica.{Get, GetResult, Insert, Remove}
-import kvstore.Replicator.Replicate
+
+import scala.concurrent.duration._
 
 object Replica {
 
@@ -29,68 +29,176 @@ object Replica {
 
   case class GetResult(key: String, valueOption: Option[String], id: Long) extends OperationReply
 
+  case object RetryPersist
+
+  case object TimeOut
 }
 
-class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
+class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with Stash {
+
+  import Persistence._
+  import Replica._
+  import Replicator._
+  import context.dispatcher
+
+  import scala.language.postfixOps
 
   /*
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
    */
 
+  override val supervisorStrategy = SupervisorStrategy.stoppingStrategy
+  /* TODO Behavior for  the leader role. */
+  val leader: Receive = {
+    case Insert(key, value, id) =>
+      kv += key -> value
+      val persist = Persist(key, Some(value), id)
+      persistence ! persist
+      replicators foreach {
+        _ ! Replicate(key, Some(value), id)
+      }
+      context.become(leaderWaitingToBeModified(sender(), persist), discardOld = false)
+    case Remove(key, id) =>
+      kv -= key
+      val persist = Persist(key, None, id)
+      persistence ! persist
+      replicators foreach {
+        _ ! Replicate(key, None, id)
+      }
+      context.become(leaderWaitingToBeModified(sender(), persist), discardOld = false)
+    case Get(key, id) =>
+      sender ! GetResult(key, kv.get(key), id)
+    case Terminated(_) =>
+      persistence = context.watch(context.actorOf(persistenceProps))
+    case Replicas(rep) =>
+      val diff = replicatorDifference(rep)
+      replicators --= diff
+  }
+  /* TODO Behavior for the replica role. */
+  val replica: Receive = {
+    case Get(key, id) =>
+      sender ! GetResult(key, kv.get(key), id)
+    case Snapshot(key, option, seq) =>
+      if (seq == expectedSeq) {
+        val wPersist = Persist(key, option, seq)
+        persistence ! Persist(key, option, seq)
+        wPersist.valueOption match {
+          case Some(value) => kv += key -> value
+          case None => kv -= key
+        }
+        context.become(replicaWaitingPersistence(sender(), wPersist), discardOld = false)
+      } else if (seq < expectedSeq) {
+        sender ! SnapshotAck(key, seq)
+      }
+    case Terminated(_) =>
+      persistence = context.watch(context.actorOf(persistenceProps))
+  }
   var kv = Map.empty[String, String]
   // a map from secondary replicas to replicators
   var secondaries = Map.empty[ActorRef, ActorRef]
   // the current set of replicators
   var replicators = Set.empty[ActorRef]
-
-  var persistence: ActorRef = context.watch(context.actorOf(persistenceProps))
-  var sequencer = 0L
-
   arbiter ! Join
+  var persistence: ActorRef = context.watch(context.actorOf(persistenceProps))
+  var expectedSeq = 0L
 
   def receive = {
     case JoinedPrimary => context.become(leader)
     case JoinedSecondary => context.become(replica)
   }
 
-  /* TODO Behavior for  the leader role. */
-  val leader: Receive = {
-    case Get(key, id) => sender() ! GetResult(key, None, id)
-    case Insert(key, value, id) =>
-    case Remove(key, id) =>
-    case Replicas(rep) =>
-      val replicas = replicasDifference(rep)
-      replicators --= replicas
-    case Terminated(_) =>
-      persistence = context.watch(context.actorOf(persistenceProps))
-  }
-  /* TODO Behavior for the replica role. */
-  val replica: Receive = {
-    case _ =>
+  def leaderWaitingToBeModified(leaderSender: ActorRef, persist: Persist): Receive = {
+    val pcan = context.system.scheduler.schedule(100 millis, 100 millis, self, RetryPersist)
+    val rcan = context.system.scheduler.scheduleOnce(1 second, self, TimeOut)
+    var rset = replicators
+
+    {
+      case Persisted(key, id) if !pcan.isCancelled && id == persist.id =>
+        pcan.cancel()
+        if (rset.isEmpty) {
+          rcan.cancel()
+          leaderSender ! OperationAck(id)
+          unstashAll()
+          context.unbecome()
+        }
+      case Replicated(key, id) if !rcan.isCancelled && id == persist.id =>
+        rset -= sender
+        if (rset.isEmpty && pcan.isCancelled) {
+          rcan.cancel()
+          leaderSender ! OperationAck(id)
+          unstashAll()
+          context.unbecome()
+        }
+      case TimeOut =>
+        pcan.cancel()
+        leaderSender ! OperationFailed(persist.id)
+        unstashAll()
+        context.unbecome()
+      case Terminated(_) =>
+        persistence = context.watch(context.actorOf(persistenceProps))
+        persistence ! persist
+      case RetryPersist =>
+        persistence ! persist
+      case Get(key, id) =>
+        sender ! GetResult(key, kv.get(key), id)
+      case Replicas(rep) =>
+        val diff = replicatorDifference(rep)
+        rset --= diff
+        replicators --= diff
+        if (rset.isEmpty && pcan.isCancelled) {
+          rcan.cancel()
+          leaderSender ! OperationAck(persist.id)
+          unstashAll()
+          context.unbecome()
+        }
+      case msg =>
+        stash()
+    }
   }
 
-  def replicasDifference(rep: Set[ActorRef]): Set[ActorRef] = {
-    var actorRefToRefMap = Map.empty[ActorRef, ActorRef]
-    rep foreach { replica =>
-      if (secondaries.contains(replica)) {
-        actorRefToRefMap += replica -> secondaries(replica)
-        secondaries -= replica
-      } else if (replica != self) {
-        val newReplica = context.actorOf(Replicator.props(replica))
-        replicators += newReplica
-        actorRefToRefMap += replica -> newReplica
-        kv foreach { elem =>
-          newReplica ! Replicate(elem._1, Some(elem._2), -1)
+  def replicatorDifference(rep: Set[ActorRef]): Set[ActorRef] = {
+    var newMap = Map.empty[ActorRef, ActorRef]
+    rep foreach { r =>
+      if (secondaries.contains(r)) {
+        newMap += r -> secondaries(r)
+        secondaries -= r
+      } else if (r != self) {
+        val newRep = context.actorOf(Replicator.props(r))
+        replicators += newRep
+        newMap += r -> newRep
+        kv foreach { e =>
+          newRep ! Replicate(e._1, Some(e._2), -1)
         }
       }
     }
-    val result = secondaries.values.toSet
-    result foreach {
+    val ret = secondaries.values.toSet
+    ret foreach {
       _ ! PoisonPill
     }
-    secondaries = actorRefToRefMap
-    result
+    secondaries = newMap
+    ret
+  }
+
+  def replicaWaitingPersistence(replicateSender: ActorRef, persist: Persist): Receive = {
+    val pcan = context.system.scheduler.schedule(100 millis, 100 millis, self, RetryPersist)
+
+    {
+      case Persisted(key, seq) if seq == expectedSeq =>
+        pcan.cancel()
+        replicateSender ! SnapshotAck(key, seq)
+        expectedSeq += 1
+        unstashAll()
+        context.unbecome()
+      case Get(key, id) =>
+        sender ! GetResult(key, kv.get(key), id)
+      case Terminated(_) =>
+        persistence = context.watch(context.actorOf(persistenceProps))
+        persistence ! persist
+      case RetryPersist =>
+        persistence ! persist
+      case msg =>
+        stash()
+    }
   }
 
 }
-
